@@ -3,6 +3,22 @@ package solid;
 import cartago.Artifact;
 import cartago.OPERATION;
 import cartago.OpFeedbackParam;
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 /**
  * A CArtAgO artifact that agent can use to interact with LDP containers in a Solid pod.
@@ -30,6 +46,12 @@ public class Pod extends Artifact {
     @OPERATION
     public void createContainer(String containerName) {
         log("1. Implement the method createContainer()");
+        String body = "@prefix ldp: <http://www.w3.org/ns/ldp#> .\n"+
+                "@prefix dcterms: <http://purl.org/dc/terms/> . \n" + 
+                "<> a ldp:Container, ldp:BasicContainer; \n" +
+                "dcterms:title \"Pod for JaCoMo\" ; \n" +
+                "dcterms:description \"This container will contain the files for the JaCoMo application.\" .  \n";
+        createContainerRequest(body, containerName);
     }
 
   /**
@@ -42,6 +64,13 @@ public class Pod extends Artifact {
     @OPERATION
     public void publishData(String containerName, String fileName, Object[] data) {
         log("2. Implement the method publishData()");
+        //check if file already exists
+        if (checkFileExistence(containerName, fileName)) {
+            updateDataRequest(containerName, fileName, data);
+        }else{
+            createFileRequest(containerName, fileName, data);
+        }
+        
     }
 
   /**
@@ -66,20 +95,7 @@ public class Pod extends Artifact {
     public Object[] readData(String containerName, String fileName) {
         log("3. Implement the method readData(). Currently, the method returns mock data");
 
-        // Remove the following mock responses once you have implemented the method
-        switch(fileName) {
-            case "watchlist.txt":
-                Object[] mockWatchlist = new Object[]{"The Matrix", "Inception", "Avengers: Endgame"};
-                return mockWatchlist;
-            case "sleep.txt":
-                Object[] mockSleepData = new Object[]{"6", "7", "5"};
-                return mockSleepData;
-            case "trail.txt":
-                Object[] mockTrailData = new Object[]{"3", "5.5", "5.5"};
-                return mockTrailData; 
-            default:
-                return new Object[0];
-        }
+        return getDataRequest(containerName, fileName);
 
     }
 
@@ -126,4 +142,184 @@ public class Pod extends Artifact {
         System.arraycopy(data, 0, allData, oldData.length, data.length);
         publishData(containerName, fileName, allData);
     }
+
+    private boolean createContainerRequest(String body, String nameOfPod) {
+        String queryUrl = "https://solid.interactions.ics.unisg.ch/AnnaLuese/";
+
+        try {
+            URI uri = new URI(queryUrl);
+            log("URI: " + uri.toString());
+            log("query: " + body);
+            log("name of pod" + nameOfPod + "/");
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Link", "<http://www.w3.org/ns/ldp#BasicContainer>; rel=\"type\"")
+                    .header("Content-Type", "text/turtle")
+                    .header("Slug", nameOfPod + "/")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+
+            HttpClient client = HttpClient.newHttpClient();
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 201) {
+                    log("status code " + (response.statusCode()));
+                    throw new RuntimeException("HTTP error code : " + response.statusCode());
+                }
+                return true;
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        } catch (URISyntaxException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    private boolean checkFileExistence(String containerName, String fileName) {
+        String queryUrl = "https://solid.interactions.ics.unisg.ch/AnnaLuese/" + containerName + "/" + fileName;
+
+        try {
+            URI uri = new URI(queryUrl);
+            log("URI: " + uri.toString());
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .GET()
+                    .build();
+
+            HttpClient client = HttpClient.newHttpClient();
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 200) {
+                    return false;
+                }
+                return true;
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        } catch (URISyntaxException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    private boolean updateDataRequest(String containerName, String fileName, Object[] data) {
+        String queryUrl = "https://solid.interactions.ics.unisg.ch/AnnaLuese/" + containerName + "/" + fileName;
+
+        try {
+            URI uri = new URI(queryUrl);
+            log("URI: " + uri.toString());
+            int i = 0;
+            var sectionLength = data.length;
+            String body = "";
+            for (i = 0; i < sectionLength; i++) {
+                body += data[i] + "\n";
+            }
+            log("body in udpate: " + body);
+
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Content-Type", "text/plain")
+                    .PUT(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+
+            HttpClient client = HttpClient.newHttpClient();
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() > 210) {
+                    throw new RuntimeException("HTTP error code : " + response.statusCode());
+                }
+                return true;
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        } catch (URISyntaxException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    
+    
+    private boolean createFileRequest(String containerName, String fileName, Object[] data) {
+        String queryUrl = "https://solid.interactions.ics.unisg.ch/AnnaLuese/" + containerName + "/";
+
+        try {
+            URI uri = new URI(queryUrl);
+            log("URI: " + uri.toString());
+            int i = 0;
+            var sectionLength = data.length;
+            String body = "";
+            for (i = 0; i < sectionLength; i++) {
+                body += data[i] + "\n";
+            }
+            log("body in create: " + body);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .header("Content-Type", "text/plain")
+                    .header("Slug", fileName)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+
+            HttpClient client = HttpClient.newHttpClient();
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 201) {
+                    throw new RuntimeException("HTTP error code : " + response.statusCode());
+                }
+                return true;
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        } catch (URISyntaxException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+    
+    private Object[] getDataRequest(String containerName, String fileName) {
+        String queryUrl = "https://solid.interactions.ics.unisg.ch/AnnaLuese/" + containerName + "/" + fileName;
+
+        try {
+            URI uri = new URI(queryUrl);
+            log("URI: " + uri.toString());
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .GET()
+                    .build();
+
+            HttpClient client = HttpClient.newHttpClient();
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() > 210) {
+                    throw new RuntimeException("HTTP error code : " + response.statusCode());
+                }
+                String result = response.body();
+                Object[] entries = result.split("\n");
+                return entries;
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        } catch (URISyntaxException e) {
+            e.printStackTrace();
+        }
+        return new Object[] { "" };
+    }
+
 }
